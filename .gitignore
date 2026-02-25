@@ -1,0 +1,8 @@
+.DS_Store
+*.op.raw
+*.raw
+*.plt
+*.log
+*.net
+*.txt
+*.swp
