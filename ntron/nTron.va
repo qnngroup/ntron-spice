@@ -1,0 +1,276 @@
+///////////////////////////////////////////////////////////////////////////////////////
+// A veriloga compact model for nanocryotron (nTron)
+//
+///////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////////////////////
+// Copyright 2015 Raytheon BBN Technologies.             								//
+// All rights reserved. Software provided on an "AS IS" BASIS only, WITHOUT WARRANTIES  //
+// OR CONDITIONS OF ANY KIND                             								//
+// Created by: Andrew Wagner, Raytheon BBN Technologies  								//
+//////////////////////////////////////////////////////////////////////////////////////////
+
+
+`include "constants.vams"
+`include "disciplines.vams"
+
+module ntron(g,d,s);
+	inout g,d,s;
+	electrical g,d,s,center; 
+
+
+///////////////////////////////////////////////////////////////////////////////////////
+//	nTron technology parameters
+///////////////////////////////////////////////////////////////////////////////////////
+
+	parameter th		= 4e-9;		// Film Thickness (m)
+	parameter Rsheet 	= 400;		// Sheet Resistance (Ohm/sq)
+	parameter c			= 4400; 	// Specific heat (J/Km^3)
+	parameter h 		= 50000;	// Thermal contact conductivity (W/m^2K)
+	parameter Tc		= 10.5;		// Critical temperature (K)
+	parameter T			= 4;		// Operation temperature (K)
+	parameter jc		= 4.6e10;	// Critical current density of the film (A/m^2)
+
+
+///////////////////////////////////////////////////////////////////////////////////////	
+//	Geometry of nTron
+///////////////////////////////////////////////////////////////////////////////////////
+
+	parameter width_g 	= 12e-9;	// Width of gate (m)
+	parameter width_d 	= 200e-9;	// Width of drain (m)
+	parameter width_s 	= 200e-9;	// Width of source (m)
+	parameter width_ch 	= 108e-9;	// Width of channel (m)
+	parameter sq_g		= 22; 		// Size of gate (sq)
+	parameter sq_d		= 200; 		// Size of drain (sq)
+	parameter sq_s		= 22; 		// Size of source (sq)
+	parameter sq_c		= 10;		// Size of channel (sq)
+
+///////////////////////////////////////////////////////////////////////////////////////
+//	Gate Switching parameters
+///////////////////////////////////////////////////////////////////////////////////////
+
+	//These parameters determine the switching of the channel with gate current. They are obtained
+	//from dc measurements of the channel critical current as a function of applied gate current. 
+
+	parameter A1 = 0.4;					
+	parameter beta = 12.82e-6;
+	parameter dc_offset = 0.01;  	// DC offset in calculating psi/NS boundary velocity
+	
+///////////////////////////////////////////////////////////////////////////////////////
+//	Variable declarations
+///////////////////////////////////////////////////////////////////////////////////////
+
+	//Parameters defined with (* info="name" *) are saved in memory for plotting and can be invoked 
+	//after simulation as:
+	// .save @n1[name] ...
+	// plot ... @n1[name] ...
+	//where n1 is the instance of the ntron model you wish to plot the computational parameter of.  
+
+	real Lsheet; 	// Sheet Kinetic Inductance (H/sq)
+	real v0; 		// SC/NS boundary velocity (m/s)
+	real kappa;		// Electron Thermal conductivity (W/mK)
+
+	real Ic_c; // Channel critical current (A)
+	real Ic_g; // Gate critical current (A)
+	real Ic_d; // Drain critical current (A)
+	real Ic_s; // Source critical current (A)
+
+	real Rg	(* info="Rg" *);	// Gate Resistance (Ohm)
+	real Rd	(* info="Rd" *);	// Drain Resistance (Ohm)
+	real Rs	(* info="Rs" *);	// Source Resistance (Ohm)
+	real Lg	(* info="Lg" *);	// Gate Inductance (H)
+	real Ld	(* info="Ld" *);	// Drain Inductance (H)
+	real Ls	(* info="Ls" *);	// Source Inductance (H)
+	real Ig	(* info="Ig" *);    // Gate Current (A)
+	real Id	(* info="Id" *);	// Drain Current (A)
+	real Is	(* info="Is" *);	// Source Current (A)
+
+	// SC/NS boundary book keeping
+	real gr, dldt_g, sqn_g;
+	real dr, dldt_d, sqn_d;
+	real sr, dldt_s, sqn_s;		
+
+///////////////////////////////////////////////////////////////////////////////////////
+// nTron model body
+///////////////////////////////////////////////////////////////////////////////////////
+	analog begin
+
+////////////////////////////////////////////////////////////////////////////////////////////
+/* Initialization                                                                         */
+/* Here we compute as many model parameters as possible only once at the first step,      */
+/* this optimizes the model since we want as few operations as possible during simulation */
+////////////////////////////////////////////////////////////////////////////////////////////
+
+		@(initial_model) begin
+
+			// ---- Model initialization --------------------------------------------
+			Lsheet  = (1.38e-12)*Rsheet/Tc; 							// Sheet Kinetic Inductance of NbN (H/sq)
+			kappa 	= 2.44e-8*Tc/(Rsheet*th);							// Electron thermal conductivity (W/mK)
+			v0 		= sqrt(kappa*h/th)/c; 								// Characteristic velocity
+
+			sqn_g = 0; 
+			sqn_d = 0; 
+			sqn_s = 0; 
+
+			Ic_c = jc*th*width_ch; 
+			Ic_g = jc*th*width_g;
+			Ic_d = jc*th*width_d;
+			Ic_s = jc*th*width_s;
+				
+		end
+
+		// Dynamic calculation of the complex impedance (Z = R + jL), for a superconducting nano-wire. This model includes the non-linear kinetic inductance of a superconducting film and 
+		// the suppression of the critical current in a nano-wire due to a hot spot formed in a narrow gate attached to the wire (nTron). 
+		// Details of these devices are described in: 
+		// A. N. McCaughan and K. K. Berggren, “A Superconducting-Nanowire Three-Terminal Electrothermal Device,” Nano Lett., vol. 14, no. 10, pp. 5748–5753, Oct. 2014. 
+		// A. Kerman, J. Yang, R. Molnar, E. Dauler, and K. Berggren, “Electrothermal feedback in superconducting nanowire single-photon detectors,” Phys Rev B, vol. 79, no. 10, pp. 100509–4, Mar. 2009.
+		// Heating in superconducting wires is described in: 
+		// A. V. Gurevich and R. G. Mints, “Self-heating in normal metals and superconductors,” Rev. Mod. Phys., vol. 59, no. 4, pp. 941–999, 1987.
+		// Numerical simulations are described in: 
+		// J. K. W. Yang, A. J. Kerman, E. A. Dauler, V. Anant, K. M. Rosfjord, and K. K. Berggren, “Modeling the Electrical and Thermal Response of Superconducting Nanowire Single-Photon Detectors,” Applied Superconductivity, IEEE Transactions on, vol. 17, no. 2, pp. 581–585, Jul. 2007.
+		// J. K. W. Yang Massachusetts Institute of Technology. Department of Electrical Engineering and Computer Science, Superconducting Nanowire Single-photon Detectors and Sub-10-nm Lithography. 2009.
+		// Measurements of useful device parameters are described in: 
+		// D. Henrich, S. Dorner, M. Hofher, K. Il'in, A. Semenov, E. Heintze, M. Scheffler, M. Dressel, and M. Siegel, “Broadening of hot-spot response spectrum of superconducting NbN nanowire single-photon detector with reduced nitrogen content,” J Appl Phys, vol. 112, no. 7, pp. 074511–9, 2012.
+		// Non-Linearity of kinetic inductance is calculated in:
+		// J. R. Clem and V. G. Kogan, “Kinetic impedance and depairing in thin and narrow superconducting films,” Phys Rev B, vol. 86, no. 17, pp. 174521–16, Nov. 2012. 
+		// This model assumes the fast relaxation limit. The slow relaxation expression has poor convergence in the simulation. Factor of 2.3 comes from fit to data in 
+		// D. Santavicca et. al. citation in review
+
+		// ---- Read in currents -----------------------------------------------------
+		Ig = I(g,center);
+		Id = I(d,center);
+		Is = I(center,s);
+
+		// ---- Gate nanowire --------------------------------------------------------
+		gr = Rsheet*pow(Ig/width_g,2)/(h*(Tc-T)); // psi * Ig^2/Ic^2
+
+		// Compute dldt for gate 
+		if ((Ic_g<=abs(Ig)) || (0<sqn_g)) begin
+			dldt_g = v0*(gr-2)/(sqrt((gr-1+abs(gr-1))/2)+dc_offset);
+		end else begin
+			dldt_g = 0;
+		end
+
+		// Limit normal state propagation
+		if ((sq_g<=sqn_g) && (0<dldt_g)) begin
+			dldt_g = 0; 
+		end 
+
+		if ((sqn_g<=0) && (dldt_g<0)) begin
+			dldt_g = 0; 
+		end 
+
+		// Compute squares of normal state
+		sqn_g = idt(dldt_g,0)/width_g;
+
+		// Min limit catch 
+		if (sqn_g<0) begin 
+			sqn_g = 0; 
+		end
+
+		// Max limit catch 
+		if (sq_g<sqn_g) begin
+			sqn_g = sq_g;
+		end
+
+		// Compute gate reactance including non-linear kinetic inductance in the fast relaxation limit
+		Rg = Rsheet*sqn_g;
+		Lg = Lsheet*(sq_g - sqn_g)/(2*cos(2*asin(abs(Ig)/2.3*Ic_g)/3)-1);
+		
+		// ---- Calculate channel critical current ------------------------------------
+		if (Ic_g<=abs(Ig)) begin
+			Ic_c = jc*th*width_ch*A1*exp(-1*(abs(Ig)-Ic_g)/beta);	
+		end else begin 
+			Ic_c = jc*th*width_ch;
+		end
+		
+		// ---- Drain nanowire ---------------------------------------------------------	
+		// This model includes the channel as part of the drain and is asymmetic in this sense
+
+		if (sqn_d < sq_c) begin
+			dr = Rsheet*pow(Id/width_ch,2)/(h*(Tc-T)); // psi * Id^2/Ic^2
+		end else begin 
+			dr = Rsheet*pow(Id/width_d,2)/(h*(Tc-T)); // psi * Id^2/Ic^2
+		end
+
+		// Compute dldt for drain
+		if ((Ic_c<=abs(Id))|| (0<sqn_d)) begin
+			dldt_d = v0*(dr-2)/(sqrt((dr-1+abs(dr-1))/2)+dc_offset);
+		end else begin
+			dldt_d = 0;	
+		end
+
+		// Limit normal state propagation 
+		if (((sq_d+sq_c)<=sqn_d) && (0<dldt_d)) begin
+			dldt_d = 0; 
+		end
+
+		if ((sqn_d<=0) && (dldt_d<0)) begin
+			dldt_d = 0; 
+		end 
+
+		// Compute squares of normal state
+		sqn_d = idt(dldt_d,0)/width_d; 
+
+		// Min limit catch
+		if (sqn_d<0) begin 
+			sqn_d = 0; 
+		end
+
+		// Max limit catch
+		if ((sq_d+sq_c)<sqn_d) begin
+			sqn_d = sq_d + sq_c;
+		end
+
+		// Compute drain reactance including non-linear kinetic inductance in the fast relaxation limit
+		Rd = Rsheet*sqn_d;
+		if (sqn_d < sq_c) begin
+			Ld = Lsheet*((sq_c - sqn_d)/(2*cos(2*asin(abs(Id)/2.3*Ic_c)/3)-1) + sq_d/(2*cos(2*asin(abs(Id)/2.3*Ic_d)/3)-1));
+		end else begin
+			Ld = Lsheet*(sq_d + sq_c - sqn_d)/(2*cos(2*asin(abs(Id)/2.3*Ic_d)/3)-1);
+		end
+
+		// ---- Source nanowire ----------------------------------------------------------	
+		sr = Rsheet*pow(Is/width_s,2)/(h*(Tc-T)); // psi * Is^2/Ic^2
+		
+		// Comput dldt for source
+		if ((Ic_c<=abs(Id)) || (0<sqn_s)) begin
+			dldt_s = v0*(sr-2)/(sqrt((sr-1+abs(sr-1))/2)+dc_offset);
+		end else begin
+			dldt_s = 0;
+		end
+
+		//Limit normal state propagation
+		if ((sq_s<sqn_s) && (0<dldt_s)) begin
+			dldt_s = 0; 
+		end
+
+		if ((sqn_s<=0) && (dldt_s<0)) begin
+			dldt_s = 0; 
+		end 
+
+		// Compute squares of normal state
+		sqn_s = idt(dldt_s,0)/width_s;
+
+		// Min limit catch
+		if (sqn_s<0) begin 
+			sqn_s = 0; 
+		end
+
+		// Max limit catch
+		if (sq_s<sqn_s) begin
+			sqn_s = sq_s;
+		end	
+
+		// Compute source reactance including non-linear kinetic inductance in the fast relaxation limit
+		Rs = Rsheet*sqn_s;
+		Ls = Lsheet*(sq_s - sqn_s)/(2*cos(2*asin(abs(Is)/2.3*Ic_s)/3)-1);	
+
+		// ---- Signals ------------------------------------------------------------------
+		V(g,center)<+ ddt(Lg*Ig) + Rg*Ig; 
+		V(d,center)<+ ddt(Ld*Id) + Rd*Id;
+		V(center,s)<+ ddt(Ls*Is) + Rs*Is; 
+
+	end
+	
+endmodule

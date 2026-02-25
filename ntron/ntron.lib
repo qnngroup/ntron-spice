@@ -1,0 +1,194 @@
+*************************************
+* nTron                             *
+*************************************
+.subckt ntron g d s
++ params: width_g=12n
++ width_s=200n width_d=200n width_c=108n
++ sq_g=22 sq_d=200 sq_s=22 sq_c=10 thickness=4n
++ sheetRes=400 Tc=10.5 Tsub=4 Jc=46G C=1 A1=0.4
+*Jc at T=Tsub in units of amps/m2
+*sheetRes has units of ohms/sq
+*Tc is critical temp and has units of K
+*Tsub is substrate temp and has units of K
+*C is constrition factor
+
+*Critical currents
+.PARAM Isw_g={Jc*width_g*thickness*C}
+.PARAM Isw_d={Jc*width_d*thickness*C}
+.PARAM Isw_s={Jc*width_s*thickness*C}
+.PARAM Isw_c={Jc*width_c*thickness*C}
+
+*Thermal Parameters
+.PARAM kappa = 2.44e-8*Tc/(sheetRes*thickness);
+* thermal conductivity W/m K
+.PARAM heatCapacity = 4400
+* heat capacity J/m^3 K
+.PARAM hc = 50k
+* thermal conductivity of surface W/m^2 K
+
+*Electrical/Superconducting Parameters
+.PARAM inductivity = {1.38p*sheetRes/Tc}
+* H/square
+
+.PARAM Lind_g = {inductivity*sq_g}
+.PARAM Lind_d = {inductivity*sq_d}
+.PARAM Lind_s = {inductivity*sq_s}
+.PARAM Lind_c = {inductivity*sq_c}
+
+* Maximum impedance of inductor, helps with solver convergence
+.PARAM Ind_Z_max = 1e6
+* ohms set to a few orders of magnitude above the largest expected
+* impedance as calculated by Lind_x*2*pi*f_max where f_max = 0.31/t_rise_min
+* is the maximum frequency in Hz based on the fastest dynamics of the
+* circuit in seconds
+* For normal nTron inductors (e.g. 200 squares of 20pH/sq), a rise time of
+* 10ps gives about 1kohm max impedance, so 1e6 is acceptable
+
+.PARAM  minSquares = {1/sheetRes}
+* # squares for minimum resistance
+* Normal resistances
+.PARAM Rnorm_g = {sheetRes*sq_g}
+.PARAM Rnorm_d = {sheetRes*sq_d}
+.PARAM Rnorm_s = {sheetRes*sq_s}
+.PARAM Rnorm_c = {sheetRes*sq_c}
+
+* units of ohms/square
+.PARAM psi={sheetRes*(Jc*thickness)**2/
++(hc*(Tc-Tsub))}
+* psi is the Stekly parameter.
+.PARAM vo={1*sqrt(hc*kappa/thickness)/
++heatCapacity}
+* vo is characteristic velocity
+
+.PARAM Ihs_g={sqrt(2/psi)*Isw_g}
+.PARAM Ihs_s={sqrt(2/psi)*Isw_s}
+.PARAM Ihs_c={sqrt(2/psi)*Isw_c}
+
+.PARAM Vthresh_g={minSquares*sheetRes*Ihs_g}
+.PARAM Vthresh_s={minSquares*sheetRes*Ihs_s}
+.PARAM Vthresh_c={minSquares*sheetRes*Ihs_c}
+
+*Unitless Parameters
+.PARAM delta={0.01}
+* a small offset value for avoiding
+* singularity in hotspot velocity
+
+*Gate switching parameters
+.PARAM beta = 12.82e-6
+
+*********************************************************************************
+
+
+** MAIN CIRCUIT GATE **
+* inductor
+Lg g N_g_int Flux=((1-(v(N_g_res)/{Rnorm_g})+0.001)*{Lind_g}/(2*cos((2/3)*
++asin((0.6*abs(x))/{Isw_g}))-1))*x Rser = 1e-100 Rpar = {Ind_Z_max}
+
+* hotspot resistor
+B_Rg N_g_int center V=if(v(N_g_res)>0,v(N_g_res)*i(B_Rg),0)
+* v(N_g_res) is resistance of hotspot
+
+** S/C SENSE SUBCIRCUIT **
+**Superconducting to Resistive Transition
+*dependent source used to store state
+B_g_state N_g_state 0 V=if((abs(i(Lg))>{Isw_g})|(abs(v(N_g_int)-v(center))>{Vthresh_g}),1,0)
+R_g_state N_g_state 0 1
+* v(N_g_state) is 0 if wire s/c, 1 if not
+
+** HOTSPOT GROWTH INTEGRATOR SUBCIRCUIT **
+*dependent current source that represents
+*hotspot S-N boundary velocity
+
+B_g_hotspot N_g_res 0 V=sdt(if(v(N_g_state) & v(N_g_res)<{Rnorm_g},
++(2*sheetRes*vo/width_g)*
++(psi*(i(Lg)/{Isw_g})**2-2)
++/((sqrt((({psi}*(i(Lg)/{Isw_g})**2-1)+abs({psi}*(i(Lg)/{Isw_g})**2-1))/2)+{delta})),0),
++0, V(N_g_state)<0.5)
+
+*********************************************************************************
+** MODULATION OF CHANNEL CRITICAL CURRENT **
+
+R_Isw_suppress N_Isw_channel 0 1
+
+B_Isw_suppress 0 N_Isw_channel I=if(abs(i(Lg))>{Isw_g} ,
++{A1}*exp(-(abs(i(Lg))-{Isw_g})/{beta}),1)
+
+
+*********************************************************************************
+
+
+** MAIN CIRCUIT SOURCE **
+* inductor
+Ls s N_s_int Flux=((1-(v(N_s_res)/{Rnorm_s})+0.001)*{Lind_s}
++/(2*cos((2/3)*asin((0.6*abs(x))/{Isw_s}))-1))*x Rser = 1e-100 Rpar = {Ind_Z_max}
+
+* hotspot resistor
+B_Rs N_s_int center V=if(v(N_s_res)>0, v(N_s_res)*i(B_Rs), 0)
+* v(N_s_res) is resistance of hotspot
+
+** S/C SENSE SUBCIRCUIT **
+**Superconducting to Resistive Transition
+*dependent source used to store state
+B_s_state N_s_state 0 V=if((abs(i(Ls))>{Isw_c}*abs(i(R_Isw_suppress)) )
++|(abs(v(N_s_int)-v(center))>{Vthresh_s}),1,0)
+R_s_state N_s_state 0 1
+* v(N_s_state) is 0 if wire s/c, 1 if not
+
+** HOTSPOT GROWTH INTEGRATOR SUBCIRCUIT **
+*dependent current source that represents
+*hotspot S-N boundary velocity
+B_s_hotspot N_s_res 0 V=sdt(if(v(N_s_state) & v(N_s_res)<{Rnorm_s},
++(2*sheetRes*vo/width_s)*
++(psi*(i(Ls)/{Isw_s})**2-2)
++/((sqrt((({psi}*(i(Ls)/{Isw_s})**2-1)+abs({psi}*(i(Ls)/{Isw_s})**2-1))/2)+{delta})),0),
++0, V(N_s_state)<0.5)
+
+
+*********************************************************************************
+
+
+** MAIN CIRCUIT DRAIN AND CHANNEL **
+
+
+* inductors
+Ld d N_d_int  Flux=((1.001-(v(N_d_res)/{Rnorm_d}))*{Lind_d}
++/(2*cos((2/3)*asin((0.6*abs(x))/{Isw_d}))-1))*x
++Rser = 1e-100 Rpar = {Ind_Z_max}
+
+Lc N_d_int N_c_int  Flux=((1.001-(v(N_c_res)/{Rnorm_c}))*{Lind_c}
++/(2*cos((2/3)*asin((0.6*abs(x))/{Isw_c}))-1))*x
++Rser = 1e-100 Rpar = {Ind_Z_max}
+
+
+* hotspot resistor
+B_Rc N_c_int center V=if((v(N_c_res) + v(N_d_res))>0, (v(N_c_res) + v(N_d_res))*i(B_Rc), 0)
+  * v(N_c_res) is resistance of hotspot
+
+** S/C SENSE SUBCIRCUIT **
+
+**Superconducting to Resistive Transition
+
+*dependent source used to store state
+B_c_state N_c_state 0 V=if((abs(i(Ld))>{Isw_c}*abs(i(R_Isw_suppress)))
++|(abs(v(N_c_int)-v(center))>{Vthresh_c}),1,0)
+R_c_state N_c_state 0 1
+  * v(N_c_state) is 0 if wire s/c, 1 if not
+
+** HOTSPOT GROWTH INTEGRATOR SUBCIRCUIT **
+*dependent current sources that represent
+*hotspot S-N boundary velocity
+
+B_c_hotspot N_c_res 0 V=sdt(if(v(N_c_state) & v(N_c_res)<{Rnorm_c},
++(2*sheetRes*vo/width_c)*
++(psi*(i(Lc)/{Isw_c})**2-2)
++/((sqrt((({psi}*(i(Lc)/{Isw_c})**2-1)+abs({psi}*(i(Lc)/{Isw_c})**2-1))/2)+{delta})),0),
++0, V(N_c_state)<0.5)
+
+B_d_hotspot N_d_res 0 V=sdt(if(v(N_c_state) & v(N_c_res)>{Rnorm_c} & v(N_d_res)<{Rnorm_d},
++(2*sheetRes*vo/width_d)*
++(psi*(i(Ld)/{Isw_d})**2-2)
++/((sqrt((({psi}*(i(Ld)/{Isw_d})**2-1)+abs({psi}*(i(Ld)/{Isw_d})**2-1))/2)+{delta})),0),
++0, V(N_c_state)<0.5)
+
+.ends ntron
+*$
