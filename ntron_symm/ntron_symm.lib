@@ -27,7 +27,9 @@
 .PARAM Isw_c={Jc*width_c*thickness}
 
 *Electrical/Superconducting Parameters
-.PARAM inductivity = {1.38p*Rsheet/Tc/tanh(1.74*sqrt(Tc/Tsub-1))}
+.PARAM orderParam0 = {1.76*Tc}
+.PARAM orderParamT = {orderParam0*tanh(1.74*sqrt(Tc/Tsub-1))}
+.PARAM inductivity = {1.38p*sheetRes/Tc*(orderParam0/(orderParamT*tanh(orderParamT/(2*Tsub))))}
 * H/square
 
 .PARAM Lind_g = {inductivity*sq_g}
