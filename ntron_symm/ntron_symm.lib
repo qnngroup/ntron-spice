@@ -5,10 +5,10 @@
 + params: width_g=100n
 + width_s=200n width_d=200n width_c=100n
 + sq_g=2 sq_d=5 sq_s=5 sq_c=2 thickness=5n
-+ Rsheet=300 Tc=12 Tsub=4 Jd_0K=46G C=0.6 A1=0.5
++ sheetRes=300 Tc=12 Tsub=4 Jd_0K=46G C=0.6 A1=0.5
 + kappa=0.108 Cheat=4.4k hc=400k
 *Jd_0K critical current density at Tsub=0 K (A/m^2)
-*Rsheet sheet resistance (ohms/sq)
+*sheetRes sheet resistance (ohms/sq)
 *Tc is critical temp (K)
 *Tsub is substrate temp (K)
 *C is constrition factor (Isw/Idep)
@@ -47,13 +47,13 @@
 * 10ps gives about 1kohm max impedance, so 1e6 is acceptable
 
 * Normal resistances
-.PARAM Rnorm_g = {Rsheet*sq_g}
-.PARAM Rnorm_d = {Rsheet*sq_d}
-.PARAM Rnorm_s = {Rsheet*sq_s}
-.PARAM Rnorm_c = {Rsheet*sq_c}
+.PARAM Rnorm_g = {sheetRes*sq_g}
+.PARAM Rnorm_d = {sheetRes*sq_d}
+.PARAM Rnorm_s = {sheetRes*sq_s}
+.PARAM Rnorm_c = {sheetRes*sq_c}
 
 * units of ohms/square
-.PARAM psi={Rsheet*(Jc*thickness)**2/(hc*(Tc-Tsub))}
+.PARAM psi={sheetRes*(Jc*thickness)**2/(hc*(Tc-Tsub))}
 * psi is the Stekly parameter.
 .PARAM vo={1*sqrt(hc*kappa/thickness)/Cheat}
 * vo is characteristic velocity
@@ -104,7 +104,7 @@ R_g_state N_g_state 0 1k
 *hotspot S-N boundary velocity
 
 B_g_hotspot N_g_res 0 V=sdt(if(v(N_g_state) & v(N_g_res)<{Rnorm_g},
-+(2*Rsheet*vo/width_g)*
++(2*sheetRes*vo/width_g)*
 +(psi*(i(Lg)/{Isw_g})**2-2)
 +/((sqrt((({psi}*(i(Lg)/{Isw_g})**2-1)+abs({psi}*(i(Lg)/{Isw_g})**2-1))/2)+{delta})),0),
 +0, V(N_g_state)<0.5)
@@ -163,18 +163,18 @@ R_d_state N_d_state 0 1k
 .endmachine
 
 B_c_hotspot N_c_res 0 V=sdt(if((v(N_c_state) | v(N_s_state) | V(N_d_state)) & v(N_c_res)<{Rnorm_c},
-+(2*Rsheet*vo/width_c)*
++(2*sheetRes*vo/width_c)*
 +(psi*(max(abs(i(Lcs)),abs(i(Lcd)))/{Isw_c})**2-2)
 +/((sqrt((({psi}*(max(abs(i(Lcs)),abs(i(Lcd)))/{Isw_c})**2-1)+abs({psi}*(max(abs(i(Lcs)),abs(i(Lcd)))/{Isw_c})**2-1))/2)+{delta})),0),
 +0, V(N_c_state)<0.5)
 
 B_s_hotspot N_s_res 0 V=sdt(if(v(N_s_state) & v(N_c_res)>={Rnorm_c/2} & v(N_s_res)<{Rnorm_s},
-+(2*Rsheet*vo/width_s)*
++(2*sheetRes*vo/width_s)*
 +(psi*(i(Ls)/{Isw_s})**2-2)
 +/((sqrt((({psi}*(i(Ls)/{Isw_s})**2-1)+abs({psi}*(i(Ls)/{Isw_s})**2-1))/2)+{delta})),0),
 +0, V(N_s_state)<0.5)
 B_d_hotspot N_d_res 0 V=sdt(if(v(N_d_state) & v(N_c_res)>={Rnorm_c/2} & v(N_d_res)<{Rnorm_d},
-+(2*Rsheet*vo/width_d)*
++(2*sheetRes*vo/width_d)*
 +(psi*(i(Ld)/{Isw_d})**2-2)
 +/((sqrt((({psi}*(i(Ld)/{Isw_d})**2-1)+abs({psi}*(i(Ld)/{Isw_d})**2-1))/2)+{delta})),0),
 +0, V(N_d_state)<0.5)
